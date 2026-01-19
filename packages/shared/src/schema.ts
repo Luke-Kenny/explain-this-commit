@@ -15,11 +15,18 @@ export type ExplainRequest = z.infer<typeof ExplainRequestSchema>;
  * structured explanation returned to the api
  */
 export const ExplainResponseSchema = z.object({
-    summary: z.array(z.string()),
-    risks: z.array(z.string()),
-    assumptions: z.array(z.string()),
-    reviewChecklist: z.array(z.string()),
+  diffStats: z.object({
+    filesChanged: z.number().int().nonnegative(),
+    additions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+    filePaths: z.array(z.string()),
+  }),
+  summary: z.array(z.string()),
+  risks: z.array(z.string()),
+  assumptions: z.array(z.string()),
+  reviewChecklist: z.array(z.string()),
 });
+
 
 export type ExplainResponse = z.infer<typeof ExplainResponseSchema>;
 

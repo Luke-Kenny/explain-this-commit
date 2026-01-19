@@ -3,13 +3,18 @@ import {
   type ExplainResponse,
 } from "@explain-this-commit/shared";
 
+import { getDiffStats } from "./diffStats";
+
 export function explainDiff(
   diff: string,
   audience: "junior" | "senior"
 ): ExplainResponse {
+  const diffStats = getDiffStats(diff);
+
   const response: ExplainResponse = {
+    diffStats,
     summary: [
-      `Received diff with ${diff.length} characters`,
+      `Changed ${diffStats.filesChanged} file(s) (+${diffStats.additions} / -${diffStats.deletions})`,
       `Audience: ${audience}`,
     ],
     risks: [],
@@ -25,7 +30,7 @@ export function explainDiff(
 
   const parsed = ExplainResponseSchema.safeParse(response);
   if (!parsed.success) {
-    throw new Error("Invalid ExplainResponse produced");
+    throw new Error("Invalid ExplainResponse produced by explainDiff");
   }
 
   return parsed.data;
