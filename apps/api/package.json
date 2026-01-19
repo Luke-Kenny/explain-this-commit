@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
-    "test":"vitest"
+    "test": "vitest",
+    "evaluate": "tsx src/tools/evaluateSamples.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +22,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.9",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.17"
   }

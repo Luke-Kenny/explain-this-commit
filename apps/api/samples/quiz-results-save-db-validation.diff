@@ -1,0 +1,511 @@
+commit 1bd854f26092b15e935c515596eaaa2808d4e361
+Author: Luke-Kenny <kennyluke31@gmail.com>
+Date:   Mon Jul 14 19:47:19 2025 +0100
+
+    Quiz results save to DB, added stronger validation to avoid jailbreaks of AI and upload
+
+diff --git a/backend/src/services/quizService.ts b/backend/src/services/quizService.ts
+index 11fa681..e42ad4b 100644
+--- a/backend/src/services/quizService.ts
++++ b/backend/src/services/quizService.ts
+@@ -1,11 +1,13 @@
+-// src/services/quizService.ts
+-
+ import { OpenAI } from "openai";
+ 
+ const openai = new OpenAI({
+   apiKey: process.env.OPENAI_API_KEY,
+ });
+ 
++/**
++ * Generating a MCQ from study content.
++ * Enforces strict JSON structure and validates each question object.
++ */
+ export const generateQuiz = async (
+   content: string
+ ): Promise<
+@@ -19,69 +21,76 @@ export const generateQuiz = async (
+     throw new Error("Provided content is insufficient for quiz generation.");
+   }
+ 
+-  const prompt = `
+-You are a quiz generation engine. Your task is to analyze academic text and extract **exactly 3 multiple-choice questions** in a **single JSON array**.
++ const prompt = `
++You are an AI-powered quiz generation engine designed to analyze academic content and generate multiple-choice questions that test conceptual understanding.
+ 
+-GOALS:
+-- Create questions that evaluate conceptual comprehension.
+-- Focus on cause/effect, definitions, relationships, applications — not trivia.
++TASK:
++From the academic text provided below, generate exactly **3 multiple-choice questions** in a single **JSON array**. The questions must focus on higher-order thinking — such as comprehension, application, causation, distinction, or implication — not mere fact recall.
+ 
+-STRICT RULES:
+-- Return ONE JSON array (not multiple).
+-- Each object must have:
+-  - "question": string
+-  - "options": array of 4 strings
+-  - "answer": string (must match one of the options exactly)
+-- NO Markdown, code blocks, or explanation. JUST the array.
++REQUIRED OUTPUT STRUCTURE:
++Return only a valid JSON array like this (NO markdown, code blocks, extra text, or comments):
+ 
+-FORMAT:
+ [
+   {
+-    "question": "What is the primary function of X?",
+-    "options": ["A", "B", "C", "D"],
+-    "answer": "A"
+-  },
+-  {
+-    ...
++    "question": "What is the main purpose of X?",
++    "options": ["Option A", "Option B", "Option C", "Option D"],
++    "answer": "Option B"
+   },
+-  {
+-    ...
+-  }
++  ...
+ ]
+ 
+-STUDY CONTENT:
++STRICT RULES:
++- Return exactly 3 question objects inside ONE array.
++- Each object must have:
++  - "question": a clear and concise question string.
++  - "options": an array of 4 unique and plausible string options.
++  - "answer": a string that matches EXACTLY one of the options.
++- Do not use formatting, symbols, or explain anything. Only return the JSON.
++- Ensure option and answer values are **textually identical**. (e.g., if the answer is "Transparency", that exact string must appear in options).
++- Do not include instructions, intro text, or annotations of any kind — just the raw array.
++
++STUDY MATERIAL TO ANALYZE:
+ """
+ ${content}
+ """
+ `;
+ 
+ 
++
++
+   try {
+     const completion = await openai.chat.completions.create({
+       model: "gpt-3.5-turbo",
+       messages: [{ role: "user", content: prompt }],
+-      temperature: 0.3, // Lower temp = less variation/hallucination
++      temperature: 0.3,
+     });
+ 
+     const raw = completion.choices?.[0]?.message?.content?.trim();
+-
+     if (!raw) {
+       throw new Error("Empty response received from OpenAI.");
+     }
+ 
+-    console.log("Raw OpenAI Output:\n", raw); // helpful for debugging
++    console.log("Raw OpenAI Output:\n", raw);
+ 
++    // sanitizing: extracting only the first JSON array block
++    const jsonStart = raw.indexOf("[");
++    const jsonEnd = raw.lastIndexOf("]");
++    if (jsonStart === -1 || jsonEnd === -1) {
++      throw new Error("OpenAI response did not contain a valid JSON array.");
++    }
++
++    const cleaned = raw.slice(jsonStart, jsonEnd + 1);
+     let quiz;
++
+     try {
+-      quiz = JSON.parse(raw);
++      quiz = JSON.parse(cleaned);
+     } catch (parseErr) {
+-      // This helps debug malformed output and improves developer feedback
+-      console.error("Invalid JSON returned from OpenAI:\n", raw);
++      console.error("Failed to parse sanitized JSON:\n", cleaned);
+       throw new Error("Failed to parse quiz data. Invalid JSON format.");
+     }
+ 
+-    if (!Array.isArray(quiz) || quiz.length < 1) {
+-      throw new Error("Quiz data is not a valid array.");
++    if (!Array.isArray(quiz) || quiz.length !== 3) {
++      throw new Error("Quiz must contain exactly 3 questions.");
+     }
+ 
+     for (const q of quiz) {
+@@ -89,9 +98,10 @@ ${content}
+         typeof q.question !== "string" ||
+         !Array.isArray(q.options) ||
+         q.options.length !== 4 ||
+-        typeof q.answer !== "string"
++        typeof q.answer !== "string" ||
++        !q.options.includes(q.answer)
+       ) {
+-        throw new Error("Quiz format is incorrect or incomplete.");
++        throw new Error("Invalid question format or missing fields.");
+       }
+     }
+ 
+diff --git a/frontend/src/pages/MyMaterials.tsx b/frontend/src/pages/MyMaterials.tsx
+index 7e958a4..b040a66 100644
+--- a/frontend/src/pages/MyMaterials.tsx
++++ b/frontend/src/pages/MyMaterials.tsx
+@@ -115,8 +115,8 @@ const MyMaterials: React.FC = () => {
+         }));
+         return;
+       }
+-
+-      navigate("/quiz", { state: { quizData: parsedQuiz } });
++      // Passing materialId when navigating to the quiz, for saving results
++      navigate("/quiz", { state: { quizData: parsedQuiz, materialId: material.id } });
+     } catch (error: any) {
+       console.error("Quiz generation error:", error);
+       setErrorMessages((prev) => ({
+diff --git a/frontend/src/pages/QuizPage.tsx b/frontend/src/pages/QuizPage.tsx
+index 5b4e18b..67021d7 100644
+--- a/frontend/src/pages/QuizPage.tsx
++++ b/frontend/src/pages/QuizPage.tsx
+@@ -12,6 +12,9 @@ import {
+ } from "@mui/material";
+ import { useLocation, useNavigate } from "react-router-dom";
+ import { motion, AnimatePresence } from "framer-motion";
++
++import { useAuth } from "../context/AuthContext";
++import { saveQuizAttempt } from "../utils/saveQuizAttempt";
+ import BackButton from "../components/BackButton";
+ 
+ interface Question {
+@@ -22,12 +25,15 @@ interface Question {
+ 
+ interface LocationState {
+   quizData: Question[];
++  materialId: string;
+ }
+ 
+ const QuizPage: React.FC = () => {
+   const location = useLocation();
+   const navigate = useNavigate();
+-  const quizData = (location.state as LocationState)?.quizData || [];
++  const { user } = useAuth();
++
++  const { quizData, materialId } = location.state as LocationState;
+ 
+   const [currentIndex, setCurrentIndex] = useState(0);
+   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+@@ -37,14 +43,14 @@ const QuizPage: React.FC = () => {
+   const [showAnswerResult, setShowAnswerResult] = useState(false);
+ 
+   useEffect(() => {
+-    if (!quizData.length) {
++    if (!quizData?.length || !materialId) {
+       navigate("/mymaterials");
+     }
+-  }, [quizData, navigate]);
++  }, [quizData, materialId, navigate]);
+ 
+   const currentQuestion = quizData[currentIndex];
+ 
+-  const handleSelect = (value: string) => {
++  const handleSelect = async (value: string) => {
+     setSelectedAnswer(value);
+     setShowAnswerResult(true);
+ 
+@@ -52,13 +58,29 @@ const QuizPage: React.FC = () => {
+     if (isCorrect) setScore((prev) => prev + 1);
+     setAnswers((prev) => [...prev, value]);
+ 
+-    setTimeout(() => {
++    setTimeout(async () => {
+       if (currentIndex + 1 < quizData.length) {
+         setCurrentIndex((prev) => prev + 1);
+         setSelectedAnswer(null);
+         setShowAnswerResult(false);
+       } else {
+         setSubmitted(true);
++
++        if (user) {
++          const finalScore = isCorrect ? score + 1 : score;
++          const finalAnswers = [...answers, value];
++          const percentage = Math.round((finalScore / quizData.length) * 100);
++
++          await saveQuizAttempt({
++            uid: user.uid,
++            materialId,
++            score: finalScore,
++            total: quizData.length,
++            percentage,
++            answers: finalAnswers,
++            quizData,
++          });
++        }
+       }
+     }, 1000);
+   };
+@@ -98,7 +120,7 @@ const QuizPage: React.FC = () => {
+         {submitted ? (
+           <>
+             <Typography variant="h4" textAlign="center" gutterBottom>
+-              🎉 Quiz Complete!
++               Quiz Complete!
+             </Typography>
+             <Typography variant="h6" textAlign="center" mb={3}>
+               Score: {score} / {quizData.length} (
+diff --git a/frontend/src/pages/Upload.tsx b/frontend/src/pages/Upload.tsx
+index 9af9c7e..46c69bd 100644
+--- a/frontend/src/pages/Upload.tsx
++++ b/frontend/src/pages/Upload.tsx
+@@ -12,6 +12,7 @@ import { ref, uploadBytes } from "firebase/storage";
+ import { db, storage } from "../firebase/firebaseConfig";
+ import { useAuth } from "../context/AuthContext";
+ import { extractTextFromPDF } from "../utils/pdfParser";
++import { isContentQuizWorthy } from "../utils/isContentQuizWorthy";
+ import ResponsiveAppBar from "../components/ResponsiveAppBar";
+ import BackButton from "../components/BackButton";
+ 
+@@ -29,8 +30,8 @@ const Upload: React.FC = () => {
+   const handleUpload = async () => {
+     setMessage("");
+ 
+-    if (!file || !user || !topic || !deadline) {
+-      setMessage("Please fill in all fields and select a file.");
++    if (!file || !user || !topic.trim() || !deadline.trim()) {
++      setMessage("Please fill in all fields and select a PDF file.");
+       return;
+     }
+ 
+@@ -39,20 +40,32 @@ const Upload: React.FC = () => {
+       return;
+     }
+ 
++    if (file.type !== "application/pdf" || !file.name.endsWith(".pdf")) {
++      setMessage("Only valid PDF files are allowed.");
++      return;
++    }
++
+     setLoading(true);
+ 
+     try {
+-      // Extract text from PDF
+       const extractedText = await extractTextFromPDF(file);
+ 
+-      // Upload file to Firebase Storage
++      const { isQuizWorthy, confidenceScore, reasons } = isContentQuizWorthy(extractedText);
++
++      if (!isQuizWorthy) {
++        setMessage(
++          `This file is not valid.\nReasons: ${reasons.join(" ")}\nConfidence: ${confidenceScore}`
++        );
++        setLoading(false);
++        return;
++      }
++
+       const storageRef = ref(storage, `uploads/${user.uid}/${file.name}`);
+       await uploadBytes(storageRef, file);
+ 
+-      // Store metadata + extracted content in Firestore
+       await addDoc(collection(db, "study_materials"), {
+         uid: user.uid,
+-        topic,
++        topic: topic.trim(),
+         deadline: Timestamp.fromDate(new Date(deadline)),
+         fileName: file.name,
+         uploadedAt: Timestamp.now(),
+@@ -150,15 +163,16 @@ const Upload: React.FC = () => {
+             type="file"
+             accept=".pdf"
+             onChange={(e) => {
+-              const selected = e.target.files?.[0];
++              const selected = e.target.files?.[0] || null;
++              setFile(selected);
+               if (
+                 selected &&
+                 selected.size > MAX_FILE_SIZE_MB * 1024 * 1024
+               ) {
+                 setMessage(`File too large. Max size is ${MAX_FILE_SIZE_MB}MB.`);
+-                return;
++              } else {
++                setMessage("");
+               }
+-              setFile(selected || null);
+             }}
+             style={{
+               color: "#fff",
+@@ -196,6 +210,7 @@ const Upload: React.FC = () => {
+             sx={{
+               mt: 1,
+               color: message.includes("successful") ? "#4ade80" : "#f87171",
++              whiteSpace: "pre-wrap",
+             }}
+           >
+             {message}
+diff --git a/frontend/src/utils/isContentQuizWorthy.ts b/frontend/src/utils/isContentQuizWorthy.ts
+index 8ae9786..6368730 100644
+--- a/frontend/src/utils/isContentQuizWorthy.ts
++++ b/frontend/src/utils/isContentQuizWorthy.ts
+@@ -1,26 +1,109 @@
+-// lightweight rule-based content filter for pdf system
+-// This is to ensure only suitable inputs are used for quiz
+-
+-export const isContentQuizWorthy = (text: string): boolean => {
+-  const minWords = 150;
+-
+-  const disqualifyingPatterns = [
+-    /submit (by|before)/i,
+-    /assignment brief/i,
+-    /assessment criteria/i,
+-    /marking rubric/i,
+-    /due date/i,
+-    /plagiarism/i,
+-    /learning outcome/i,
+-    /how to submit/i,
+-    /turnitin/i,
+-    /grading/i,
+-  ];
++/**
++ * Custom eval on whether a given academic text is suitable for quiz generation.
++ * Using heuristic scoring based on structural, semantic, and lexical signals.
++ */
++
++interface EvaluationResult {
++  isQuizWorthy: boolean;
++  confidenceScore: number; // 0 to 1
++  reasons: string[];
++  debug?: {
++    wordCount: number;
++    academicHits: number;
++    structureHits: number;
++    lexicalDensity: number;
++  };
++}
++
++export const isContentQuizWorthy = (text: string): EvaluationResult => {
++  if (typeof text !== "string" || text.trim().length === 0) {
++    return {
++      isQuizWorthy: false,
++      confidenceScore: 0,
++      reasons: ["Empty or invalid input."],
++    };
++  }
++
++  const cleanedText = text.trim();
++  const lowerText = cleanedText.toLowerCase();
++  const words = cleanedText.split(/\s+/);
++  const wordCount = words.length;
+ 
+-  const wordCount = text.trim().split(/\s+/).length;
+-  const containsDisallowed = disqualifyingPatterns.some((pattern) =>
+-    pattern.test(text)
++  // Blocked boilerplate/admin phrases
++  const BLOCKED_PHRASES = [
++    "assignment brief", "assessment criteria", "marking rubric", "due date",
++    "turnitin", "canvas", "moodle", "student id", "submission portal",
++    "how to submit", "plagiarism", "file naming convention",
++    "this assignment", "feedback will be provided", "instructions",
++    "lorem ipsum", "contact your instructor", "page is intentionally left blank",
++  ];
++  const disallowed = BLOCKED_PHRASES.filter((phrase) =>
++    lowerText.includes(phrase)
+   );
++  if (disallowed.length > 0) {
++    return {
++      isQuizWorthy: false,
++      confidenceScore: 0,
++      reasons: [`Contains boilerplate content: "${disallowed[0]}"`],
++    };
++  }
++
++  // Academic signals — cross-disciplinary
++  const ACADEMIC_TERMS = [
++    "hypothesis", "methodology", "literature review", "framework", "empirical",
++    "quantitative", "qualitative", "findings", "dataset", "case study",
++    "argument", "premise", "theoretical", "variable", "analysis",
++    "evidence", "discussion", "results", "correlation", "conclusion",
++    "citation", "construct", "conceptual", "data", "inference", "observation"
++  ];
++  const academicHits = ACADEMIC_TERMS.filter((term) =>
++    lowerText.includes(term)
++  ).length;
++
++  // Structural cues
++  const STRUCTURE_MARKERS = [
++    "introduction", "abstract", "methods", "discussion", "references", "bibliography"
++  ];
++  const structureHits = STRUCTURE_MARKERS.filter((marker) =>
++    lowerText.includes(marker)
++  ).length;
++
++  // Lexical density = content words / total words
++  const FUNCTION_WORDS = [
++    "the", "and", "or", "but", "if", "then", "a", "an", "in", "on", "to", "of", "with", "is", "was", "be"
++  ];
++  const functionWordSet = new Set(FUNCTION_WORDS);
++  const contentWordCount = words.filter(
++    (w) => !functionWordSet.has(w.toLowerCase())
++  ).length;
++  const lexicalDensity = parseFloat((contentWordCount / wordCount).toFixed(2));
++
++  // Heuristic scoring
++  const lengthScore = Math.min(wordCount / 300, 1);
++  const academicScore = Math.min(academicHits / 6, 1);
++  const structureScore = Math.min(structureHits / 3, 1);
++  const lexicalScore = Math.min(lexicalDensity, 1);
++
++  // Weighted scoring
++  const rawScore =
++    0.4 * academicScore +
++    0.2 * lengthScore +
++    0.2 * lexicalScore +
++    0.2 * structureScore;
++
++  const confidenceScore = parseFloat(rawScore.toFixed(2));
++  const isQuizWorthy = confidenceScore >= 0.5;
++
++  const reasons: string[] = [];
++  if (academicHits < 2) reasons.push("Lacks academic keywords.");
++  if (structureHits === 0) reasons.push("No academic structure indicators.");
++  if (lexicalDensity < 0.45) reasons.push("Low lexical density (too informal or functional).");
++  if (wordCount < 200) reasons.push("Short length (under 200 words).");
+ 
+-  return wordCount >= minWords && !containsDisallowed;
++  return {
++    isQuizWorthy,
++    confidenceScore,
++    reasons: isQuizWorthy ? [] : reasons,
++    debug: { wordCount, academicHits, structureHits, lexicalDensity },
++  };
+ };
+diff --git a/frontend/src/utils/saveQuizAttempt.ts b/frontend/src/utils/saveQuizAttempt.ts
+new file mode 100644
+index 0000000..32cc523
+--- /dev/null
++++ b/frontend/src/utils/saveQuizAttempt.ts
+@@ -0,0 +1,29 @@
++import { db } from "../firebase/firebaseConfig";
++import { collection, addDoc, serverTimestamp } from "firebase/firestore";
++
++interface QuizAttempt {
++    uid: string;
++    materialId: string;
++    score: number;
++    total: number;
++    percentage: number;
++    answers: string[];
++    quizData: {
++        question: string;
++        options: string[];
++        answer: string;
++    }[];
++}
++
++// Adding a new collection to firestore which contains quiz analytics
++export const saveQuizAttempt = async (data: QuizAttempt) => {
++    try {
++        await addDoc(collection(db, "quiz_attempts"), {
++            ...data,
++            createdAt: serverTimestamp(),
++        });
++        console.log("Quiz attempt saved");
++    } catch (error) {
++        console.error("Failed to save quiz attempt:", error);
++    }
++};
+\ No newline at end of file

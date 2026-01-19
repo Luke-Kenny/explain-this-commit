@@ -1,0 +1,42 @@
+[33m8ffbbe4[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain-branch[m[33m, [m[1;31morigin/main-branch[m[33m, [m[1;31morigin/HEAD[m[33m)[m Update README.md
+[33ma3db7b9[m Update README.md
+[33m4e87533[m Update README.md
+[33m720e857[m Update README.md
+[33m6cb512d[m V1.0
+[33m9d766a5[m[33m ([m[1;33mtag: [m[1;33mV1.0[m[33m)[m Update README.md
+[33m4261718[m TempoLearn v1.0
+[33m7210a81[m Update README.md
+[33m3b3ec8a[m sa2
+[33m335e423[m UI Overhaul
+[33m0ed32a2[m fix build config
+[33mdec1ab7[m Eval
+[33m176a65c[m Analytics Dashboard + UI Overhaul
+[33m1af4544[m Emotional feedback system
+[33mef316d0[m Custom Notes generation
+[33m0d9b629[m Added multiple quiz styles and difficulty level adjustment + prompt refinement
+[33m623895f[m Cleaned up duplicate TempoLearn directory and updated .gitignore
+[33m1bd854f[m Quiz results save to DB, added stronger validation to avoid jailbreaks of AI and upload
+[33m367c3d7[m Updated README.md
+[33mb471ef9[m OpenAI Api added with custom quiz generation, backend setup and files restructured
+[33m7a955a3[m enabled pdf parsing and storing extracted content in firestore
+[33m939dbf6[m PDF Upload prototype 1 added + styled
+[33m6bbe160[m Update README.md
+[33m5716064[m Update README.md
+[33m5dd76b6[m Update README.md
+[33m569f6c6[m Styled Homepage and Landing page, Footer, Appbar
+[33m3d9abc1[m Database connected and upload system setup
+[33m0e41e94[m fix deployment
+[33m562145a[m UI dashboard updated, card carousel, card data, logout button, preparing for roadmap of prototype
+[33mf2e1224[m Homepage adjusted to protoype UI Dashboard
+[33mdd6f6fa[m Merge pull request #1 from Luke-Kenny/login/register
+[33ma9cac27[m Update README.md
+[33m539c8ef[m[33m ([m[1;31morigin/login/register[m[33m)[m Homepage styled, login/signup
+[33m8d90818[m Adjusted styling and background
+[33mc7377e9[m Login/Signup Implemented with Firebase Authentication, Homepage created to test protected routes
+[33m590a93c[m Login/Signup Styling, Routing Set Up, Landing Page redesigned
+[33mc8d913f[m Login/Register files created (TODO)
+[33m7f30542[m Reconfigured Deploy File
+[33m24a7b88[m Reconfigured Deploy File
+[33m8300996[m Cleaned Security Risks on old branch
+[33m4aa1059[m Cleaned
+[33m7763dae[m fresh start

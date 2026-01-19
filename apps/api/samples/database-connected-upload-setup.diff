@@ -1,0 +1,46 @@
+commit 3d9abc1ef6ce9f998608023bdbcbfd6347a66aad
+Author: Luke Kenny <kennyluke31@gmail.com>
+Date:   Tue Jun 24 17:49:40 2025 +0100
+
+    Database connected and upload system setup
+
+diff --git a/frontend/src/firebase/firebaseConfig.ts b/frontend/src/firebase/firebaseConfig.ts
+index d6a185f..7bdfbe7 100644
+--- a/frontend/src/firebase/firebaseConfig.ts
++++ b/frontend/src/firebase/firebaseConfig.ts
+@@ -1,5 +1,7 @@
+ import { initializeApp } from "firebase/app";
+ import { getAuth } from "firebase/auth";
++import { getFirestore } from "firebase/firestore";
++import { getStorage } from "firebase/storage";
+ 
+ const firebaseConfig = {
+   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+@@ -11,5 +13,10 @@ const firebaseConfig = {
+   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+ };
+ 
++// Initializes Firebase App
+ const app = initializeApp(firebaseConfig);
++
++// Exports Firebase Services
+ export const auth = getAuth(app);
++export const db = getFirestore(app);
++export const storage = getStorage(app);
+diff --git a/frontend/src/pages/Upload.tsx b/frontend/src/pages/Upload.tsx
+new file mode 100644
+index 0000000..892f7e4
+--- /dev/null
++++ b/frontend/src/pages/Upload.tsx
+@@ -0,0 +1,11 @@
++import React from "react";
++
++const Upload: React.FC = () => {
++  return (
++    <div style={{ padding: "2rem" }}>
++      <h2>Start Your TempoStudy</h2>
++    </div>
++  );
++};
++
++export default Upload;

@@ -1,0 +1,1009 @@
+commit 0d9b62941578d774fafde0c5b6aaeff9b8a450fc
+Author: Luke-Kenny <kennyluke31@gmail.com>
+Date:   Tue Jul 22 01:59:46 2025 +0100
+
+    Added multiple quiz styles and difficulty level adjustment + prompt refinement
+
+diff --git a/backend/package-lock.json b/backend/package-lock.json
+index 6216636..fe79b88 100644
+--- a/backend/package-lock.json
++++ b/backend/package-lock.json
+@@ -12,12 +12,14 @@
+         "cors": "^2.8.5",
+         "dotenv": "^17.2.0",
+         "express": "^5.1.0",
+-        "openai": "^5.9.0"
++        "openai": "^5.9.0",
++        "uuid": "^11.1.0"
+       },
+       "devDependencies": {
+         "@types/cors": "^2.8.19",
+         "@types/express": "^5.0.3",
+         "@types/node": "^24.0.13",
++        "@types/uuid": "^10.0.0",
+         "ts-node-dev": "^2.0.0",
+         "typescript": "^5.8.3"
+       }
+@@ -222,6 +224,13 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/@types/uuid": {
++      "version": "10.0.0",
++      "resolved": "https://registry.npmjs.org/@types/uuid/-/uuid-10.0.0.tgz",
++      "integrity": "sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/accepts": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz",
+@@ -1693,6 +1702,19 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/uuid": {
++      "version": "11.1.0",
++      "resolved": "https://registry.npmjs.org/uuid/-/uuid-11.1.0.tgz",
++      "integrity": "sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==",
++      "funding": [
++        "https://github.com/sponsors/broofa",
++        "https://github.com/sponsors/ctavan"
++      ],
++      "license": "MIT",
++      "bin": {
++        "uuid": "dist/esm/bin/uuid"
++      }
++    },
+     "node_modules/v8-compile-cache-lib": {
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/v8-compile-cache-lib/-/v8-compile-cache-lib-3.0.1.tgz",
+diff --git a/backend/package.json b/backend/package.json
+index 37b5967..35751ac 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -15,12 +15,14 @@
+     "cors": "^2.8.5",
+     "dotenv": "^17.2.0",
+     "express": "^5.1.0",
+-    "openai": "^5.9.0"
++    "openai": "^5.9.0",
++    "uuid": "^11.1.0"
+   },
+   "devDependencies": {
+     "@types/cors": "^2.8.19",
+     "@types/express": "^5.0.3",
+     "@types/node": "^24.0.13",
++    "@types/uuid": "^10.0.0",
+     "ts-node-dev": "^2.0.0",
+     "typescript": "^5.8.3"
+   }
+diff --git a/backend/src/services/quizService.ts b/backend/src/services/quizService.ts
+index e42ad4b..7941214 100644
+--- a/backend/src/services/quizService.ts
++++ b/backend/src/services/quizService.ts
+@@ -1,62 +1,108 @@
+ import { OpenAI } from "openai";
+ 
++// Initializing my OpenAI client
+ const openai = new OpenAI({
+   apiKey: process.env.OPENAI_API_KEY,
+ });
+ 
+-/**
+- * Generating a MCQ from study content.
+- * Enforces strict JSON structure and validates each question object.
+- */
++// Defines the expected question structure
++export type QuizQuestion = {
++  type: "mcq" | "true_false" | "cloze" | "short_answer";
++  question: string;
++  answer: string | boolean;
++  difficulty: "easy" | "medium" | "hard";
++  cognitive_level:
++    | "remember"
++    | "understand"
++    | "apply"
++    | "analyze"
++    | "evaluate"
++    | "create";
++  explanation?: string;
++  options?: string[]; // Only for MCQs
++};
++
++// Runtime validation for each question
++function isValidQuestion(obj: any): obj is QuizQuestion {
++  const baseCheck =
++    typeof obj.question === "string" &&
++    ["easy", "medium", "hard"].includes(obj.difficulty) &&
++    [
++      "remember",
++      "understand",
++      "apply",
++      "analyze",
++      "evaluate",
++      "create",
++    ].includes(obj.cognitive_level) &&
++    ["mcq", "true_false", "cloze", "short_answer"].includes(obj.type);
++
++  if (!baseCheck) return false;
++
++  if (obj.type === "mcq") {
++    return (
++      Array.isArray(obj.options) &&
++      obj.options.length === 4 &&
++      obj.options.every((opt: string) => typeof opt === "string") &&
++      typeof obj.answer === "string" &&
++      obj.options.includes(obj.answer)
++    );
++  }
++
++  if (obj.type === "true_false") {
++    return typeof obj.answer === "boolean";
++  }
++
++  return typeof obj.answer === "string";
++}
++
++// Difficulty-to-question-type mapping
++const typeMap = {
++  easy: ["mcq", "true_false"],
++  medium: ["mcq", "true_false", "cloze"],
++  hard: ["mcq", "cloze", "short_answer"],
++};
++
++// Main quiz generation function
+ export const generateQuiz = async (
+-  content: string
+-): Promise<
+-  {
+-    question: string;
+-    options: string[];
+-    answer: string;
+-  }[]
+-> => {
++  content: string,
++  difficulty: "easy" | "medium" | "hard" = "medium"
++): Promise<QuizQuestion[]> => {
+   if (!content || content.length < 100) {
+     throw new Error("Provided content is insufficient for quiz generation.");
+   }
+ 
+- const prompt = `
+-You are an AI-powered quiz generation engine designed to analyze academic content and generate multiple-choice questions that test conceptual understanding.
++  const allowedTypes = typeMap[difficulty];
++
++  const prompt = `
++You are an AI quiz engine. Given academic content, generate a diagnostic quiz to assess conceptual understanding.
+ 
+ TASK:
+-From the academic text provided below, generate exactly **3 multiple-choice questions** in a single **JSON array**. The questions must focus on higher-order thinking — such as comprehension, application, causation, distinction, or implication — not mere fact recall.
+-
+-REQUIRED OUTPUT STRUCTURE:
+-Return only a valid JSON array like this (NO markdown, code blocks, extra text, or comments):
+-
+-[
+-  {
+-    "question": "What is the main purpose of X?",
+-    "options": ["Option A", "Option B", "Option C", "Option D"],
+-    "answer": "Option B"
+-  },
+-  ...
+-]
+-
+-STRICT RULES:
+-- Return exactly 3 question objects inside ONE array.
+-- Each object must have:
+-  - "question": a clear and concise question string.
+-  - "options": an array of 4 unique and plausible string options.
+-  - "answer": a string that matches EXACTLY one of the options.
+-- Do not use formatting, symbols, or explain anything. Only return the JSON.
+-- Ensure option and answer values are **textually identical**. (e.g., if the answer is "Transparency", that exact string must appear in options).
+-- Do not include instructions, intro text, or annotations of any kind — just the raw array.
+-
+-STUDY MATERIAL TO ANALYZE:
++- Generate 5 to 7 questions.
++- Use only the following question types (based on difficulty level "${difficulty}"): ${allowedTypes.join(", ")}
++
++QUESTION TYPES:
++- "mcq": Multiple-choice with exactly 4 options. One of them must be the correct answer.
++- "true_false": True or false.
++- "cloze": Fill-in-the-blank.
++- "short_answer": Brief open-ended response.
++
++EACH QUESTION MUST INCLUDE:
++- "type": one of: ${allowedTypes.join(", ")}
++- "question": the question text
++- "answer": correct answer (string or boolean)
++- "difficulty": "easy", "medium", or "hard"
++- "cognitive_level": "remember", "understand", "apply", "analyze", "evaluate", or "create"
++- Optional: "options": for "mcq" only (must be exactly 4 strings and must include the correct answer)
++- Optional: "explanation": a short explanation for the answer
++
++IMPORTANT:
++Return only the JSON array. No extra text, markdown, or comments.
++
++CONTENT:
+ """
+ ${content}
+-"""
+-`;
+-
+-
+-
++"""`;
+ 
+   try {
+     const completion = await openai.chat.completions.create({
+@@ -66,46 +112,38 @@ ${content}
+     });
+ 
+     const raw = completion.choices?.[0]?.message?.content?.trim();
+-    if (!raw) {
+-      throw new Error("Empty response received from OpenAI.");
+-    }
++    if (!raw) throw new Error("OpenAI returned an empty response.");
+ 
+     console.log("Raw OpenAI Output:\n", raw);
+ 
+-    // sanitizing: extracting only the first JSON array block
+     const jsonStart = raw.indexOf("[");
+     const jsonEnd = raw.lastIndexOf("]");
+     if (jsonStart === -1 || jsonEnd === -1) {
+-      throw new Error("OpenAI response did not contain a valid JSON array.");
++      throw new Error("Response did not contain a valid JSON array.");
+     }
+ 
+     const cleaned = raw.slice(jsonStart, jsonEnd + 1);
+-    let quiz;
++    let parsed: any;
+ 
+     try {
+-      quiz = JSON.parse(cleaned);
+-    } catch (parseErr) {
+-      console.error("Failed to parse sanitized JSON:\n", cleaned);
+-      throw new Error("Failed to parse quiz data. Invalid JSON format.");
++      parsed = JSON.parse(cleaned);
++    } catch (err) {
++      console.error("Failed to parse OpenAI JSON:\n", cleaned);
++      throw new Error("Quiz JSON could not be parsed.");
+     }
+ 
+-    if (!Array.isArray(quiz) || quiz.length !== 3) {
+-      throw new Error("Quiz must contain exactly 3 questions.");
++    if (!Array.isArray(parsed) || parsed.length < 5 || parsed.length > 7) {
++      throw new Error("Quiz must contain 5 to 7 questions.");
+     }
+ 
+-    for (const q of quiz) {
+-      if (
+-        typeof q.question !== "string" ||
+-        !Array.isArray(q.options) ||
+-        q.options.length !== 4 ||
+-        typeof q.answer !== "string" ||
+-        !q.options.includes(q.answer)
+-      ) {
+-        throw new Error("Invalid question format or missing fields.");
++    for (let i = 0; i < parsed.length; i++) {
++      if (!isValidQuestion(parsed[i])) {
++        console.error("Invalid question format at index", i, ":", parsed[i]);
++        throw new Error(`Question ${i + 1} failed validation.`);
+       }
+     }
+ 
+-    return quiz;
++    return parsed;
+   } catch (err: any) {
+     console.error("Quiz generation error:", err.message || err);
+     throw new Error("Quiz generation failed. Please try again.");
+diff --git a/backend/src/utils/quizSchema.ts b/backend/src/utils/quizSchema.ts
+new file mode 100644
+index 0000000..a385cb0
+--- /dev/null
++++ b/backend/src/utils/quizSchema.ts
+@@ -0,0 +1,28 @@
++// Define allowed question types
++export type QuestionType = "mcq" | "true_false" | "cloze" | "short_answer";
++
++// Define cognitive levels based on Bloom’s Taxonomy
++export type CognitiveLevel =
++  | "remember"
++  | "understand"
++  | "apply"
++  | "analyze"
++  | "evaluate"
++  | "create";
++
++// Define difficulty levels
++export type Difficulty = "easy" | "medium" | "hard";
++
++// Main QuizQuestion type definition
++export interface QuizQuestion {
++  type: QuestionType;
++  question: string;
++  answer: string | boolean;
++  difficulty: Difficulty;
++  cognitive_level: CognitiveLevel;
++  explanation?: string;
++  options?: string[]; // Only present for MCQs
++}
++
++// Define full quiz structure (array of questions)
++export type QuizSchema = QuizQuestion[];
+diff --git a/frontend/src/components/DifficultyDialog.tsx b/frontend/src/components/DifficultyDialog.tsx
+new file mode 100644
+index 0000000..0f31ef9
+--- /dev/null
++++ b/frontend/src/components/DifficultyDialog.tsx
+@@ -0,0 +1,57 @@
++import React from "react";
++import {
++  Dialog,
++  DialogTitle,
++  DialogContent,
++  DialogActions,
++  FormControl,
++  InputLabel,
++  Select,
++  MenuItem,
++  Button,
++} from "@mui/material";
++
++interface DifficultyDialogProps {
++  open: boolean;
++  difficulty: string;
++  onClose: () => void;
++  onSelect: (difficulty: string) => void;
++  onConfirm: () => void;
++}
++
++const DifficultyDialog: React.FC<DifficultyDialogProps> = ({
++  open,
++  difficulty,
++  onClose,
++  onSelect,
++  onConfirm,
++}) => {
++  return (
++    <Dialog open={open} onClose={onClose}>
++      <DialogTitle>Select Quiz Difficulty</DialogTitle>
++      <DialogContent>
++        <FormControl fullWidth sx={{ mt: 2 }}>
++          <InputLabel>Difficulty</InputLabel>
++          <Select
++            value={difficulty}
++            label="Difficulty"
++            onChange={(e) => onSelect(e.target.value)}
++          >
++            <MenuItem value="mixed">Mixed</MenuItem>
++            <MenuItem value="easy">Easy</MenuItem>
++            <MenuItem value="medium">Medium</MenuItem>
++            <MenuItem value="hard">Hard</MenuItem>
++          </Select>
++        </FormControl>
++      </DialogContent>
++      <DialogActions>
++        <Button onClick={onClose}>Cancel</Button>
++        <Button onClick={onConfirm} variant="contained">
++          Continue
++        </Button>
++      </DialogActions>
++    </Dialog>
++  );
++};
++
++export default DifficultyDialog;
+diff --git a/frontend/src/pages/MyMaterials.tsx b/frontend/src/pages/MyMaterials.tsx
+index b040a66..76e4374 100644
+--- a/frontend/src/pages/MyMaterials.tsx
++++ b/frontend/src/pages/MyMaterials.tsx
+@@ -17,10 +17,11 @@ import dayjs from "dayjs";
+ import { db, storage } from "../firebase/firebaseConfig";
+ import { useAuth } from "../context/AuthContext";
+ import ResponsiveAppBar from "../components/ResponsiveAppBar";
++import BackButton from "../components/BackButton";
++import DifficultyDialog from "../components/DifficultyDialog";
+ 
+ import { extractTextFromPDF } from "../utils/pdfParser";
+ import { isContentQuizWorthy } from "../utils/isContentQuizWorthy";
+-import BackButton from "../components/BackButton";
+ 
+ interface Material {
+   id: string;
+@@ -41,20 +42,23 @@ const MyMaterials: React.FC = () => {
+   const [errorMessages, setErrorMessages] = useState<{ [key: string]: string }>({});
+   const [snackOpen, setSnackOpen] = useState(false);
+ 
++  const [dialogOpen, setDialogOpen] = useState(false);
++  const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
++  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("mixed");
++
++  // Fetch user materials
+   useEffect(() => {
+-    const fetchMaterials = async () => {
+-      if (!user) return;
++    if (!user) return;
+ 
++    const fetchMaterials = async () => {
+       try {
+-        const q = query(
+-          collection(db, "study_materials"),
+-          where("uid", "==", user.uid)
+-        );
+-        const querySnapshot = await getDocs(q);
+-        const fetched: Material[] = [];
+-        querySnapshot.forEach((doc) => {
+-          fetched.push({ id: doc.id, ...doc.data() } as Material);
+-        });
++        const q = query(collection(db, "study_materials"), where("uid", "==", user.uid));
++        const snapshot = await getDocs(q);
++        const fetched: Material[] = snapshot.docs.map((doc) => ({
++          id: doc.id,
++          ...doc.data(),
++        })) as Material[];
++
+         setMaterials(fetched);
+       } catch (error) {
+         console.error("Failed to fetch materials:", error);
+@@ -66,8 +70,17 @@ const MyMaterials: React.FC = () => {
+     fetchMaterials();
+   }, [user]);
+ 
+-  const handleGenerateQuiz = async (material: Material) => {
+-    if (!user) return;
++  const openDifficultyDialog = (material: Material) => {
++    setSelectedMaterial(material);
++    setSelectedDifficulty("mixed");
++    setDialogOpen(true);
++  };
++
++  const handleGenerateQuiz = async () => {
++    if (!user || !selectedMaterial) return;
++
++    const material = selectedMaterial;
++    setDialogOpen(false);
+     setQuizLoadingId(material.id);
+     setErrorMessages((prev) => ({ ...prev, [material.id]: "" }));
+ 
+@@ -88,34 +101,18 @@ const MyMaterials: React.FC = () => {
+         return;
+       }
+ 
+-      const quizRes = await fetch(
+-        `${import.meta.env.VITE_BACKEND_URL}/api/quiz`,
+-        {
+-          method: "POST",
+-          headers: { "Content-Type": "application/json" },
+-          body: JSON.stringify({ content: text }),
+-        }
+-      );
++      const quizRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/quiz`, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ content: text, difficulty: selectedDifficulty }),
++      });
+ 
+       const data = await quizRes.json();
++      if (!quizRes.ok) throw new Error(data.message || "Quiz generation failed.");
+ 
+-      if (!quizRes.ok) {
+-        throw new Error(data.message || "Quiz generation failed.");
+-      }
++      const parsedQuiz =
++        typeof data.quiz === "string" ? JSON.parse(data.quiz) : data.quiz;
+ 
+-      let parsedQuiz;
+-      try {
+-        parsedQuiz =
+-          typeof data.quiz === "string" ? JSON.parse(data.quiz) : data.quiz;
+-      } catch (e) {
+-        console.error("Failed to parse quiz JSON:", data.quiz);
+-        setErrorMessages((prev) => ({
+-          ...prev,
+-          [material.id]: "The quiz format returned was invalid.",
+-        }));
+-        return;
+-      }
+-      // Passing materialId when navigating to the quiz, for saving results
+       navigate("/quiz", { state: { quizData: parsedQuiz, materialId: material.id } });
+     } catch (error: any) {
+       console.error("Quiz generation error:", error);
+@@ -173,12 +170,10 @@ const MyMaterials: React.FC = () => {
+                 File: {item.fileName}
+               </Typography>
+               <Typography variant="body2" color="#cbd5e1">
+-                Deadline:{" "}
+-                {dayjs(item.deadline?.toDate()).format("DD MMM YYYY, HH:mm")}
++                Deadline: {dayjs(item.deadline?.toDate()).format("DD MMM YYYY, HH:mm")}
+               </Typography>
+               <Typography variant="body2" color="#cbd5e1" mb={2}>
+-                Uploaded:{" "}
+-                {dayjs(item.uploadedAt?.toDate()).format("DD MMM YYYY, HH:mm")}
++                Uploaded: {dayjs(item.uploadedAt?.toDate()).format("DD MMM YYYY, HH:mm")}
+               </Typography>
+ 
+               {item.textContent && (
+@@ -207,7 +202,7 @@ const MyMaterials: React.FC = () => {
+                 <Button
+                   variant="contained"
+                   size="small"
+-                  onClick={() => handleGenerateQuiz(item)}
++                  onClick={() => openDifficultyDialog(item)}
+                   disabled={quizLoadingId === item.id}
+                   sx={{
+                     backgroundColor: "#3b82f6",
+@@ -253,6 +248,15 @@ const MyMaterials: React.FC = () => {
+           {quizLoadingId ? "Generating quiz..." : "Quiz ready or error handled."}
+         </Alert>
+       </Snackbar>
++
++      <DifficultyDialog
++        open={dialogOpen}
++        difficulty={selectedDifficulty}
++        onSelect={(val) => setSelectedDifficulty(val)}
++        onClose={() => setDialogOpen(false)}
++        onConfirm={handleGenerateQuiz}
++      />
++
+       <BackButton />
+     </Box>
+   );
+diff --git a/frontend/src/pages/QuizPage.tsx b/frontend/src/pages/QuizPage.tsx
+index 67021d7..8d0a302 100644
+--- a/frontend/src/pages/QuizPage.tsx
++++ b/frontend/src/pages/QuizPage.tsx
+@@ -9,6 +9,7 @@ import {
+   Button,
+   LinearProgress,
+   Divider,
++  TextField,
+ } from "@mui/material";
+ import { useLocation, useNavigate } from "react-router-dom";
+ import { motion, AnimatePresence } from "framer-motion";
+@@ -17,17 +18,26 @@ import { useAuth } from "../context/AuthContext";
+ import { saveQuizAttempt } from "../utils/saveQuizAttempt";
+ import BackButton from "../components/BackButton";
+ 
+-interface Question {
++type Question = {
++  type: "mcq" | "true_false" | "cloze" | "short_answer";
+   question: string;
+-  options: string[];
+-  answer: string;
+-}
++  options?: string[];
++  answer: string | boolean;
++  explanation?: string;
++  difficulty: "easy" | "medium" | "hard";
++  cognitive_level: string;
++};
+ 
+ interface LocationState {
+   quizData: Question[];
+   materialId: string;
+ }
+ 
++const normalize = (input: string | boolean) => {
++  if (typeof input === "boolean") return input;
++  return input.trim().toLowerCase().replace(/[^\w\s]/gi, "");
++};
++
+ const QuizPage: React.FC = () => {
+   const location = useLocation();
+   const navigate = useNavigate();
+@@ -36,11 +46,12 @@ const QuizPage: React.FC = () => {
+   const { quizData, materialId } = location.state as LocationState;
+ 
+   const [currentIndex, setCurrentIndex] = useState(0);
+-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+-  const [answers, setAnswers] = useState<string[]>([]);
++  const [selectedAnswer, setSelectedAnswer] = useState<string | boolean>("");
++  const [answers, setAnswers] = useState<(string | boolean)[]>([]);
+   const [submitted, setSubmitted] = useState(false);
+   const [score, setScore] = useState(0);
+   const [showAnswerResult, setShowAnswerResult] = useState(false);
++  const [shortAnswerText, setShortAnswerText] = useState("");
+ 
+   useEffect(() => {
+     if (!quizData?.length || !materialId) {
+@@ -50,18 +61,19 @@ const QuizPage: React.FC = () => {
+ 
+   const currentQuestion = quizData[currentIndex];
+ 
+-  const handleSelect = async (value: string) => {
++  const handleSelect = async (value: string | boolean) => {
+     setSelectedAnswer(value);
+     setShowAnswerResult(true);
+ 
+-    const isCorrect = value === currentQuestion.answer;
++    const isCorrect = normalize(value) === normalize(currentQuestion.answer);
+     if (isCorrect) setScore((prev) => prev + 1);
+     setAnswers((prev) => [...prev, value]);
+ 
+     setTimeout(async () => {
+       if (currentIndex + 1 < quizData.length) {
+         setCurrentIndex((prev) => prev + 1);
+-        setSelectedAnswer(null);
++        setSelectedAnswer("");
++        setShortAnswerText("");
+         setShowAnswerResult(false);
+       } else {
+         setSubmitted(true);
+@@ -77,8 +89,17 @@ const QuizPage: React.FC = () => {
+             score: finalScore,
+             total: quizData.length,
+             percentage,
+-            answers: finalAnswers,
+-            quizData,
++            answers: quizData.map((q, index) => ({
++              question: q.question,
++              type: q.type,
++              correctAnswer: q.answer,
++              userAnswer: finalAnswers[index],
++              isCorrect: normalize(finalAnswers[index]) === normalize(q.answer),
++              difficulty: q.difficulty,
++              cognitive_level: q.cognitive_level,
++              explanation: q.explanation || null,
++              options: q.options || null,
++            })),
+           });
+         }
+       }
+@@ -87,169 +108,140 @@ const QuizPage: React.FC = () => {
+ 
+   const handleRestart = () => {
+     setCurrentIndex(0);
+-    setSelectedAnswer(null);
++    setSelectedAnswer("");
++    setShortAnswerText("");
+     setScore(0);
+     setAnswers([]);
+     setSubmitted(false);
+     setShowAnswerResult(false);
+   };
+ 
++  const handleShortAnswerSubmit = () => {
++    if (!shortAnswerText.trim()) return;
++    handleSelect(shortAnswerText.trim());
++  };
++
+   return (
+-    <Box
+-      sx={{
+-        backgroundColor: "#0f172a",
+-        minHeight: "100vh",
+-        py: 10,
+-        px: 2,
+-        display: "flex",
+-        justifyContent: "center",
+-        alignItems: "center",
+-      }}
+-    >
+-      <Paper
+-        elevation={6}
+-        sx={{
+-          backgroundColor: "#1e293b",
+-          color: "#f8fafc",
+-          borderRadius: 4,
+-          p: 4,
+-          maxWidth: 720,
+-          width: "100%",
+-        }}
+-      >
++    <Box sx={{ backgroundColor: "#0f172a", minHeight: "100vh", py: 10, px: 2, display: "flex", justifyContent: "center", alignItems: "center" }}>
++      <Paper elevation={6} sx={{ backgroundColor: "#1e293b", color: "#f8fafc", borderRadius: 4, p: 4, maxWidth: 720, width: "100%" }}>
+         {submitted ? (
+           <>
+-            <Typography variant="h4" textAlign="center" gutterBottom>
+-               Quiz Complete!
+-            </Typography>
+-            <Typography variant="h6" textAlign="center" mb={3}>
+-              Score: {score} / {quizData.length} (
+-              {Math.round((score / quizData.length) * 100)}%)
+-            </Typography>
+-
++            <Typography variant="h4" textAlign="center" gutterBottom>Quiz Complete!</Typography>
++            <Typography variant="h6" textAlign="center" mb={3}>Score: {score} / {quizData.length} ({Math.round((score / quizData.length) * 100)}%)</Typography>
+             <Divider sx={{ mb: 3, borderColor: "#334155" }} />
+ 
+             {quizData.map((q, idx) => {
+               const userAnswer = answers[idx];
+-              const isCorrect = userAnswer === q.answer;
++              const isCorrect = normalize(userAnswer) === normalize(q.answer);
+               return (
+                 <Box key={idx} sx={{ mb: 3 }}>
+-                  <Typography variant="subtitle1" fontWeight={600}>
+-                    Q{idx + 1}: {q.question}
+-                  </Typography>
+-                  <Typography
+-                    variant="body2"
+-                    fontWeight={500}
+-                    sx={{
+-                      color: isCorrect ? "#22c55e" : "#ef4444",
+-                    }}
+-                  >
+-                    Your Answer: {userAnswer}
++                  <Typography variant="subtitle1" fontWeight={600}>Q{idx + 1}: {q.question}</Typography>
++                  <Typography variant="body2" fontWeight={500} sx={{ color: isCorrect ? "#22c55e" : "#ef4444" }}>
++                    Your Answer: {String(userAnswer)}
+                   </Typography>
+                   {!isCorrect && (
+-                    <Typography
+-                      variant="body2"
+-                      sx={{ color: "#facc15", fontWeight: 500 }}
+-                    >
+-                      Correct Answer: {q.answer}
++                    <Typography variant="body2" sx={{ color: "#facc15", fontWeight: 500 }}>
++                      Correct Answer: {String(q.answer)}
++                    </Typography>
++                  )}
++                  {q.explanation && (
++                    <Typography variant="body2" sx={{ color: "#38bdf8", fontStyle: "italic" }}>
++                      Explanation: {q.explanation}
+                     </Typography>
+                   )}
+                 </Box>
+               );
+             })}
+ 
+-            <Button
+-              fullWidth
+-              variant="contained"
+-              onClick={handleRestart}
+-              sx={{
+-                mt: 4,
+-                backgroundColor: "#3b82f6",
+-                "&:hover": { backgroundColor: "#2563eb" },
+-              }}
+-            >
++            <Button fullWidth variant="contained" onClick={handleRestart} sx={{ mt: 4, backgroundColor: "#3b82f6", "&:hover": { backgroundColor: "#2563eb" } }}>
+               Retake Quiz
+             </Button>
+             <BackButton />
+           </>
+         ) : (
+           <AnimatePresence mode="wait">
+-            <motion.div
+-              key={currentIndex}
+-              initial={{ opacity: 0, x: 100 }}
+-              animate={{ opacity: 1, x: 0 }}
+-              exit={{ opacity: 0, x: -100 }}
+-              transition={{ duration: 0.3 }}
+-            >
+-              <Typography variant="h6" mb={2}>
+-                Question {currentIndex + 1} of {quizData.length}
+-              </Typography>
+-
+-              <LinearProgress
+-                variant="determinate"
+-                value={((currentIndex + 1) / quizData.length) * 100}
+-                sx={{
+-                  mb: 3,
+-                  backgroundColor: "#334155",
+-                  "& .MuiLinearProgress-bar": {
+-                    backgroundColor: "#3b82f6",
+-                  },
+-                }}
+-              />
+-
+-              <Typography
+-                variant="body1"
+-                sx={{ mb: 2, fontSize: "1.15rem", fontWeight: 500 }}
+-              >
+-                {currentQuestion?.question}
+-              </Typography>
+-
+-              <RadioGroup
+-                value={selectedAnswer}
+-                onChange={(e) => handleSelect(e.target.value)}
+-                sx={{ color: "#f1f5f9" }}
+-              >
+-                {currentQuestion.options.map((opt, idx) => {
+-                  const isCorrect = opt === currentQuestion.answer;
+-                  const isSelected = opt === selectedAnswer;
+-
+-                  return (
+-                    <FormControlLabel
+-                      key={idx}
+-                      value={opt}
+-                      control={
+-                        <Radio
+-                          disabled={showAnswerResult}
+-                          sx={{
+-                            color: "#3b82f6",
+-                            "&.Mui-checked": {
+-                              color: isCorrect
+-                                ? "#22c55e"
+-                                : isSelected
+-                                ? "#ef4444"
+-                                : "#3b82f6",
+-                            },
+-                          }}
+-                        />
+-                      }
+-                      label={opt}
+-                      sx={{
+-                        mb: 1,
+-                        borderRadius: 2,
+-                        px: 2,
+-                        py: 1,
+-                        backgroundColor:
+-                          showAnswerResult && isSelected
+-                            ? isCorrect
+-                              ? "#14532d"
+-                              : "#7f1d1d"
++            <motion.div key={currentIndex} initial={{ opacity: 0, x: 100 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -100 }} transition={{ duration: 0.3 }}>
++              <Typography variant="h6" mb={2}>Question {currentIndex + 1} of {quizData.length}</Typography>
++              <LinearProgress variant="determinate" value={((currentIndex + 1) / quizData.length) * 100}
++                sx={{ mb: 3, backgroundColor: "#334155", "& .MuiLinearProgress-bar": { backgroundColor: "#3b82f6" } }} />
++              <Typography variant="body1" sx={{ mb: 2, fontSize: "1.15rem", fontWeight: 500 }}>{currentQuestion?.question}</Typography>
++
++              {currentQuestion.type === "mcq" && currentQuestion.options && (
++                <RadioGroup value={selectedAnswer} onChange={(e) => handleSelect(e.target.value)} sx={{ color: "#f1f5f9" }}>
++                  {currentQuestion.options.map((opt, idx) => {
++                    const isCorrect = normalize(opt) === normalize(currentQuestion.answer);
++                    const isSelected = opt === selectedAnswer;
++                    return (
++                      <FormControlLabel
++                        key={idx}
++                        value={opt}
++                        control={<Radio disabled={showAnswerResult} sx={{ color: "#3b82f6", "&.Mui-checked": { color: isCorrect ? "#22c55e" : isSelected ? "#ef4444" : "#3b82f6" } }} />}
++                        label={opt}
++                        sx={{
++                          mb: 1,
++                          borderRadius: 2,
++                          px: 2,
++                          py: 1,
++                          backgroundColor: showAnswerResult && isSelected
++                            ? isCorrect ? "#14532d" : "#7f1d1d"
+                             : "transparent",
+-                        transition: "0.3s",
+-                      }}
+-                    />
+-                  );
+-                })}
+-              </RadioGroup>
++                          transition: "0.3s",
++                        }}
++                      />
++                    );
++                  })}
++                </RadioGroup>
++              )}
++
++              {currentQuestion.type === "true_false" && (
++                <Box display="flex" gap={2}>
++                  {["True", "False"].map((val) => {
++                    const boolVal = val === "True";
++                    const isCorrect = boolVal === currentQuestion.answer;
++                    const isSelected = selectedAnswer === boolVal;
++
++                    return (
++                      <Button
++                        key={val}
++                        variant="outlined"
++                        disabled={showAnswerResult}
++                        onClick={() => handleSelect(boolVal)}
++                        sx={{
++                          color: "#f8fafc",
++                          borderColor: "#3b82f6",
++                          backgroundColor:
++                            showAnswerResult && isSelected
++                              ? isCorrect ? "#14532d" : "#7f1d1d"
++                              : "transparent",
++                          "&:hover": { backgroundColor: "#1e40af" },
++                        }}
++                      >
++                        {val}
++                      </Button>
++                    );
++                  })}
++                </Box>
++              )}
++
++              {["short_answer", "cloze"].includes(currentQuestion.type) && (
++                <Box>
++                  <TextField
++                    fullWidth
++                    placeholder="Type your answer"
++                    value={shortAnswerText}
++                    onChange={(e) => setShortAnswerText(e.target.value)}
++                    sx={{ backgroundColor: "#fff", borderRadius: 2, mb: 2 }}
++                  />
++                  <Button
++                    variant="contained"
++                    onClick={handleShortAnswerSubmit}
++                    disabled={showAnswerResult || !shortAnswerText.trim()}
++                    sx={{ backgroundColor: "#3b82f6", "&:hover": { backgroundColor: "#2563eb" } }}
++                  >
++                    Submit Answer
++                  </Button>
++                </Box>
++              )}
+             </motion.div>
+           </AnimatePresence>
+         )}
+diff --git a/frontend/src/utils/saveQuizAttempt.ts b/frontend/src/utils/saveQuizAttempt.ts
+index 32cc523..9f15e28 100644
+--- a/frontend/src/utils/saveQuizAttempt.ts
++++ b/frontend/src/utils/saveQuizAttempt.ts
+@@ -1,29 +1,45 @@
+ import { db } from "../firebase/firebaseConfig";
+ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+ 
++interface QuizQuestion {
++  type: "mcq" | "true_false" | "cloze" | "short_answer";
++  question: string;
++  options?: string[];
++  answer: string | boolean;
++  difficulty: "easy" | "medium" | "hard";
++  cognitive_level: string;
++  explanation?: string;
++}
++
++interface AnswerDetail {
++  question: string;
++  type: "mcq" | "true_false" | "cloze" | "short_answer";
++  correctAnswer: string | boolean;
++  userAnswer: string | boolean;
++  isCorrect: boolean;
++  difficulty: "easy" | "medium" | "hard";
++  cognitive_level: string;
++  explanation?: string | null;
++  options?: string[] | null;
++}
++
+ interface QuizAttempt {
+-    uid: string;
+-    materialId: string;
+-    score: number;
+-    total: number;
+-    percentage: number;
+-    answers: string[];
+-    quizData: {
+-        question: string;
+-        options: string[];
+-        answer: string;
+-    }[];
++  uid: string;
++  materialId: string;
++  score: number;
++  total: number;
++  percentage: number;
++  answers: AnswerDetail[];
+ }
+ 
+-// Adding a new collection to firestore which contains quiz analytics
+ export const saveQuizAttempt = async (data: QuizAttempt) => {
+-    try {
+-        await addDoc(collection(db, "quiz_attempts"), {
+-            ...data,
+-            createdAt: serverTimestamp(),
+-        });
+-        console.log("Quiz attempt saved");
+-    } catch (error) {
+-        console.error("Failed to save quiz attempt:", error);
+-    }
+-};
+\ No newline at end of file
++  try {
++    await addDoc(collection(db, "quiz_attempts"), {
++      ...data,
++      createdAt: serverTimestamp(),
++    });
++    console.log("Quiz attempt saved");
++  } catch (error) {
++    console.error("Failed to save quiz attempt:", error);
++  }
++};
+diff --git a/frontend/tsconfig.app.json b/frontend/tsconfig.app.json
+index 358ca9b..e622312 100644
+--- a/frontend/tsconfig.app.json
++++ b/frontend/tsconfig.app.json
+@@ -22,5 +22,5 @@
+     "noFallthroughCasesInSwitch": true,
+     "noUncheckedSideEffectImports": true
+   },
+-  "include": ["src"]
++  "include": ["src", "../backend/src/types"]
+ }

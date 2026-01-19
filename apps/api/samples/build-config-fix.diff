@@ -1,0 +1,21 @@
+commit 0ed32a2c67d87b8c85f3b321ce713f9c6385742b
+Author: Luke-Kenny <kennyluke31@gmail.com>
+Date:   Sat Aug 9 23:15:12 2025 +0100
+
+    fix build config
+
+diff --git a/frontend/tsconfig.test.json b/frontend/tsconfig.test.json
+index f7aae0b..92a53ce 100644
+--- a/frontend/tsconfig.test.json
++++ b/frontend/tsconfig.test.json
+@@ -4,8 +4,8 @@
+     "outDir": "dist",
+     "rootDir": ".",
+     "target": "ES2022",
+-    "module": "NodeNext",
+-    "moduleResolution": "NodeNext",
++    "module": "ESNext",
++    "moduleResolution": "bundler",
+     "jsx": "react-jsx",
+     "skipLibCheck": true,
+     "types": ["node", "react", "react-dom"],
