@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { explainDiff } from "../services/explainService";
+import { getTouchedAreas } from "../services/areaClassifier";
 
 type Row = {
   sample: string;
@@ -19,10 +20,6 @@ function listDiffFiles(samplesDir: string) {
     .sort();
 }
 
-function extractAreas(summary: string[]): string {
-  const line = summary.find((s) => s.toLowerCase().includes("touched areas:") || s.toLowerCase().includes("areas:"));
-  return line ?? "";
-}
 
 function isHighSignalRisk(risk: string) {
   const r = risk.toLowerCase();
@@ -58,7 +55,7 @@ function main() {
         filesChanged: res.diffStats.filesChanged,
         additions: res.diffStats.additions,
         deletions: res.diffStats.deletions,
-        areas: extractAreas(res.summary),
+        areas: getTouchedAreas(res.diffStats).filter((a) => a !== "other").join(", "),
         risksCount: res.risks.length,
         highSignalRiskCount: res.risks.filter(isHighSignalRisk).length,
       };
