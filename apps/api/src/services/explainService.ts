@@ -4,7 +4,7 @@ import {
 } from "@explain-this-commit/shared";
 
 import { getDiffStats } from "./diffStats";
-import { getRisks } from "./riskHeuristics";
+import { getRiskSignals } from "./riskHeuristics";
 import { getReviewChecklist } from "./checklistHeuristics";
 import { getTouchedAreas } from "./areaClassifier";
 
@@ -17,7 +17,9 @@ export function explainDiff(
   const areas = getTouchedAreas(diffStats).filter((a) => a !== "other");
   const areaText = areas.length ? areas.slice(0, 3).join(", ") : "misc changes";
 
-  const allRisks = getRisks(diffStats);
+  const riskSignals = getRiskSignals(diffStats);
+  const allRisks = riskSignals.map((r) => r.message);
+  
   const allChecklist = getReviewChecklist(diffStats);
 
   const isSenior = audience === "senior";
