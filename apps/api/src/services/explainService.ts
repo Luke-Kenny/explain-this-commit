@@ -4,12 +4,14 @@ import {
 } from "@explain-this-commit/shared";
 
 import { getDiffStats } from "./diffStats";
+import { getRisks } from "./riskHeuristics";
 
 export function explainDiff(
   diff: string,
   audience: "junior" | "senior"
 ): ExplainResponse {
   const diffStats = getDiffStats(diff);
+  const risks = getRisks(diffStats);
 
   const response: ExplainResponse = {
     diffStats,
@@ -17,7 +19,7 @@ export function explainDiff(
       `Changed ${diffStats.filesChanged} file(s) (+${diffStats.additions} / -${diffStats.deletions})`,
       `Audience: ${audience}`,
     ],
-    risks: [],
+    risks,
     assumptions: [
       "No repository context provided; explanation is based only on the diff.",
     ],
