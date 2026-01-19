@@ -7,6 +7,7 @@ import { getDiffStats } from "./diffStats";
 import { getRiskSignals } from "./riskHeuristics";
 import { getReviewChecklist } from "./checklistHeuristics";
 import { getTouchedAreas } from "./areaClassifier";
+import { getIntentSignals } from "./intentClassifier";
 
 export function explainDiff(
   diff: string,
@@ -21,6 +22,7 @@ export function explainDiff(
   const allRisks = riskSignals.map((r) => r.message);
   
   const allChecklist = getReviewChecklist(diffStats);
+  const intents = getIntentSignals(diff, diffStats, riskSignals);
 
   const isSenior = audience === "senior";
 
@@ -35,16 +37,26 @@ export function explainDiff(
   // for seniors: keeping the top checklist items (signal > completeness)
   const reviewChecklist = isSenior ? allChecklist.slice(0, 4) : allChecklist;
 
+  const topIntent = intents[0];
+
+  const intentText =
+  topIntent.intent === "unknown"
+    ? "unclear from diff alone"
+    : `${topIntent.intent.split("_").join(" ")} (${topIntent.confidence})`;
+
   const summary = isSenior
     ? [
         `${diffStats.filesChanged} file(s) changed (+${diffStats.additions} / -${diffStats.deletions}); areas: ${areaText}.`,
-        risks.length ? `Key risks: ${risks.slice(0, 2).join(" | ")}` : "No major risks detected by heuristics.",
-      ]
+        `Intent: ${intentText}.`,
+        ]
     : [
         `Changed ${diffStats.filesChanged} file(s) (+${diffStats.additions} / -${diffStats.deletions}).`,
         `Touched areas: ${areaText}.`,
+        `Likely intent: ${intentText}.`,
+        `Rationale: ${topIntent.rationale}`,
         `Audience: ${audience}`,
-      ];
+        ];
+
 
   const response: ExplainResponse = {
     diffStats,
