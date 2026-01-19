@@ -44,7 +44,7 @@ export function getRisks(diffStats: DiffStats): string[] {
     risks.push("No test files changed — confirm coverage still matches the change scope.");
   }
 
-  // Size-based heuristics
+  // size-based heuristics
   const totalChanged = diffStats.additions + diffStats.deletions;
 
   if (diffStats.filesChanged >= 10) {
@@ -59,6 +59,6 @@ export function getRisks(diffStats: DiffStats): string[] {
     risks.push("Significant deletions — ensure functionality wasn’t removed unintentionally.");
   }
 
-  // De-dup in case multiple rules add similar things
+  // de-dup in case multiple rules add similar things
   return Array.from(new Set(risks));
 }
