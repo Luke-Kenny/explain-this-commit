@@ -5,6 +5,7 @@ import {
 
 import { getDiffStats } from "./diffStats";
 import { getRisks } from "./riskHeuristics";
+import { getReviewChecklist } from "./checklistHeuristics";
 
 export function explainDiff(
   diff: string,
@@ -12,6 +13,7 @@ export function explainDiff(
 ): ExplainResponse {
   const diffStats = getDiffStats(diff);
   const risks = getRisks(diffStats);
+  const reviewChecklist = getReviewChecklist(diffStats);
 
   const response: ExplainResponse = {
     diffStats,
@@ -23,11 +25,7 @@ export function explainDiff(
     assumptions: [
       "No repository context provided; explanation is based only on the diff.",
     ],
-    reviewChecklist: [
-      "Confirm intent matches the change",
-      "Check edge cases and error handling",
-      "Run relevant tests locally/CI",
-    ],
+    reviewChecklist,
   };
 
   const parsed = ExplainResponseSchema.safeParse(response);
